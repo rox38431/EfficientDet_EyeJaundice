@@ -89,6 +89,7 @@ class ModelWithLoss(nn.Module):
 
 
 def train(opt):
+    print("Hi")
     params = Params(f'projects/eye.yml')
 
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
