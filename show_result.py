@@ -25,7 +25,7 @@ use_float16 = False
 cudnn.fastest = True
 cudnn.benchmark = True
 
-obj_list = ['N', 'Y']
+obj_list = ['eye']
 input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
 
 model = EfficientDetBackbone(compound_coef=compound_coef, num_classes=len(obj_list),
@@ -34,7 +34,7 @@ model = EfficientDetBackbone(compound_coef=compound_coef, num_classes=len(obj_li
                              ratios=[(1.0, 1.0), (1.4, 0.7), (0.7, 1.4)],
                              scales=[2 ** 0, 2 ** (1.0 / 3.0), 2 ** (2.0 / 3.0)])
 
-model.load_state_dict(torch.load('logs/efficientdet-d1_2020_05_29_09_34_02_116_3500.pth'))
+model.load_state_dict(torch.load('logs/d1_2020_05_29_last.pth'))
 model.requires_grad_(False)
 model.eval()
 model = model.cuda()
@@ -69,10 +69,7 @@ for img_path in img_list:
             score = float(out[i]['scores'][j])
             (x1, y1, x2, y2) = out[i]['rois'][j].astype(np.int)
             
-            if (obj == 'N'):
-                color = (232, 162, 0)
-            else:
-                color = (128, 0, 255)
+            color = (232, 162, 0)
 
             cv2.rectangle(ori_imgs[i], (x1, y1), (x2, y2), color, 2)
             cv2.putText(ori_imgs[i], '{}, {:.3f}'.format(obj, score),

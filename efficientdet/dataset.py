@@ -39,7 +39,8 @@ class EyeDataset(Dataset):
                     y1 = int(label[i * 5 + 1])
                     x2 = int(label[i * 5 + 2])
                     y2 = int(label[i * 5 + 3])
-                    category = int(label[i * 5 + 4])
+                    # category = int(label[i * 5 + 4])
+                    category = 0
                     self.annos[file_name].append([x1, y1, x2, y2, category])
                 self.annos[file_name] = np.array(self.annos[file_name], dtype="float64")
     

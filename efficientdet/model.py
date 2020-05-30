@@ -388,14 +388,17 @@ class EfficientNet(nn.Module):
     def __init__(self, compound_coef, load_weights=False):
         super(EfficientNet, self).__init__()
         model = EffNet.from_pretrained(f'efficientnet-b{compound_coef}', load_weights)
-        del model._conv_head
-        del model._bn1
-        del model._avg_pooling
-        del model._dropout
-        del model._fc
+        # del model._conv_head
+        # del model._bn1
+        # del model._avg_pooling
+        # del model._dropout
+        # del model._fc
         self.model = model
 
     def forward(self, x):
+        bf = x.size(0)
+        print("boyfriend:", bf)
+
         x = self.model._conv_stem(x)
         x = self.model._bn0(x)
         x = self.model._swish(x)
@@ -410,13 +413,29 @@ class EfficientNet(nn.Module):
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self.model._blocks)
             x = block(x, drop_connect_rate=drop_connect_rate)
-
+            print(idx, x.shape)
             if block._depthwise_conv.stride == [2, 2]:
                 feature_maps.append(last_x)
+                # print("Append:", x.shape)
             elif idx == len(self.model._blocks) - 1:
                 feature_maps.append(x)
+                # print("Append:", x.shape)
             last_x = x
-        del last_x
+        # del last_x
+
+        # Classification head
+        print(x.shape)
+        x = self.model._conv_head(x)
+        x = self.model._bn1(x)
+        x = self.model._siwsh(x)
+
+        # Pooling and final linear layer
+        x = self.model._avg_pooling(x)
+        x = x.view(bs, -1)
+        x = self.model._dropout(x)
+        x = self.model._fc(x)
+        print(x.shape)
+
         return feature_maps[1:]
 
 

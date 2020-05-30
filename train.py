@@ -53,6 +53,7 @@ def get_args():
                         help='Early stopping\'s parameter: minimum change loss to qualify as an improvement')
     parser.add_argument('--es_patience', type=int, default=0,
                         help='Early stopping\'s parameter: number of epochs with no improvement after which training will be stopped. Set to 0 to disable this technique.')
+    parser.add_argument('--gpu', type=str, default='0', help='gpu choosed to run the code')
     parser.add_argument('--data_path', type=str, default='datasets/', help='the root folder of dataset')
     parser.add_argument('--log_path', type=str, default='logs/')
     parser.add_argument('-w', '--load_weights', type=str, default=None,
@@ -92,7 +93,7 @@ def train(opt):
     print("Hi")
     params = Params(f'projects/eye.yml')
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
 
     opt.saved_path = f"./{opt.saved_path}/{params.project_name}/"
     os.makedirs(opt.saved_path, exist_ok=True)
@@ -179,29 +180,12 @@ def train(opt):
         model.apply(freeze_backbone)
         print('[Info] freezed backbone')
 
-    # https://github.com/vacancy/Synchronized-BatchNorm-PyTorch
-    # apply sync_bn when using multiple gpu and batch_size per gpu is lower than 4
-    #  useful when gpu memory is limited.
-    # because when bn is disable, the training will be very unstable or slow to converge,
-    # apply sync_bn can solve it,
-    # by packing all mini-batch across all gpus as one batch and normalize, then send it back to all gpus.
-    # but it would also slow down the training by a little bit.
-    if params.num_gpus > 1 and opt.batch_size // params.num_gpus < 4:
-        model.apply(replace_w_sync_bn)
-        use_sync_bn = True
-    else:
-        use_sync_bn = False
-    
 
     # warp the model with loss function, to reduce the memory usage on gpu0 and speedup
     model = ModelWithLoss(model, debug=opt.debug)
 
     if params.num_gpus > 0:
         model = model.cuda()
-        if params.num_gpus > 1:
-            model = CustomDataParallel(model, params.num_gpus)
-            if use_sync_bn:
-                patch_replication_callback(model)
 
     if opt.optim == 'adamw':
         optimizer = torch.optim.AdamW(model.parameters(), opt.lr)
@@ -222,8 +206,6 @@ def train(opt):
     try:
         for epoch in range(opt.num_epochs):
             last_epoch = step // num_iter_per_epoch
-            if epoch < last_epoch:  # Don't known what is this line doing?
-                continue
 
             epoch_loss = []
             for iter, data in enumerate(training_generator):
@@ -231,16 +213,16 @@ def train(opt):
                     imgs = data['img']
                     annot = data['annot']
 
-                    if params.num_gpus == 1:
-                        imgs = imgs.cuda()
-                        annot = annot.cuda()
+                    imgs = imgs.cuda()
+                    annot = annot.cuda()
 
                     optimizer.zero_grad()
                     cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
                     cls_loss = cls_loss.mean()
                     reg_loss = reg_loss.mean()
 
-                    loss = cls_loss + reg_loss
+                    # loss = cls_loss + reg_loss
+                    loss = reg_loss
                     if loss == 0 or not torch.isfinite(loss):
                         continue
 
@@ -269,7 +251,6 @@ def train(opt):
             if epoch % opt.val_interval == 0:
                 model.eval()
                 loss_regression_ls = []
-                loss_classification_ls = []
                 for iter, data in enumerate(val_generator):
                     with torch.no_grad():
                         imgs = data['img']
@@ -280,22 +261,17 @@ def train(opt):
                             annot = annot.cuda()
 
                         cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
-                        cls_loss = cls_loss.mean()
                         reg_loss = reg_loss.mean()
 
-                        loss = cls_loss + reg_loss
-                        if loss == 0 or not torch.isfinite(loss):
-                            continue
-                        loss_classification_ls.append(cls_loss.item())
+                        loss = reg_loss
                         loss_regression_ls.append(reg_loss.item())
 
-                cls_loss = np.mean(loss_classification_ls)
                 reg_loss = np.mean(loss_regression_ls)
-                loss = cls_loss + reg_loss
+                loss = reg_loss
 
                 print(
-                    'Val. Epoch: {}/{}. Classification loss: {:1.5f}. Regression loss: {:1.5f}. Total loss: {:1.5f}'.format(
-                        epoch, opt.num_epochs, cls_loss, reg_loss, loss))
+                    'Val. Epoch: {}/{}. Regression loss: {:1.5f}. Total loss: {:1.5f}'.format(
+                        epoch, opt.num_epochs, reg_loss, loss))
 
                 if loss + opt.es_min_delta < best_loss:
                     best_loss = loss

@@ -175,12 +175,14 @@ class EfficientNet(nn.Module):
         for block in self._blocks:
             block.set_swish(memory_efficient)
 
-
-    def extract_features(self, inputs):
-        """ Returns output of the final convolution layer """
+    def forward(self, inputs):
+        """ Calls extract_features to extract features, applies final linear layer, and returns logits. """
+        bs = inputs.size(0)
 
         # Stem
-        x = self._swish(self._bn0(self._conv_stem(inputs)))
+        x = self._conv_stem(x)
+        x = self._bn0(x)
+        x = self._swish(x)
 
         # Blocks
         for idx, block in enumerate(self._blocks):
@@ -188,16 +190,11 @@ class EfficientNet(nn.Module):
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self._blocks)
             x = block(x, drop_connect_rate=drop_connect_rate)
+
         # Head
-        x = self._swish(self._bn1(self._conv_head(x)))
-
-        return x
-
-    def forward(self, inputs):
-        """ Calls extract_features to extract features, applies final linear layer, and returns logits. """
-        bs = inputs.size(0)
-        # Convolution layers
-        x = self.extract_features(inputs)
+        x = self._conv_head(x)
+        x = self._bn1(x)
+        x = self._swish(x)
 
         # Pooling and final linear layer
         x = self._avg_pooling(x)
