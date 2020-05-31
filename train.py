@@ -78,15 +78,26 @@ class ModelWithLoss(nn.Module):
         self.criterion = FocalLoss()
         self.model = model
         self.debug = debug
+        self.cls_criterion = nn.CrossEntropyLoss()
 
     def forward(self, imgs, annotations, obj_list=None):  # Annotations is gt
-        _, regression, classification, anchors = self.model(imgs)
+        _, regression, classification, cls_result, anchors = self.model(imgs)
+        cls_target = annotations[:, 0, -1]
+        cls_target = cls_target.type(torch.LongTensor)
+        cls_target = cls_target.cuda()
         if self.debug:
             cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations,
                                                 imgs=imgs, obj_list=obj_list)
+            cls_head_loss = self.cls_criterion(cls_result, cls_target)
         else:
             cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations)
-        return cls_loss, reg_loss
+            cls_head_loss = self.cls_criterion(cls_result, cls_target)
+
+        _, predicted = cls_result.max(1)
+        total_num = cls_target.size(0)
+        # print(predicted.eq(cls_target).sum().item()/total_num * 100)
+        cls_correct_num = predicted.eq(cls_target).sum().item()
+        return cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num
 
 
 def train(opt):
@@ -111,6 +122,7 @@ def train(opt):
                   'num_workers': opt.num_workers}
 
     input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
+    # input_sizes = [512, 224, 768, 896, 1024, 1280, 1280, 1536]
     
     train_img_dir = "/tmp2/jojo/eye_data/raw/train"
     test_img_dir = "/tmp2/jojo/eye_data/raw/test"
@@ -208,6 +220,8 @@ def train(opt):
             last_epoch = step // num_iter_per_epoch
 
             epoch_loss = []
+            total_correct = 0
+            total = 0
             for iter, data in enumerate(training_generator):
                 try:
                     imgs = data['img']
@@ -217,12 +231,13 @@ def train(opt):
                     annot = annot.cuda()
 
                     optimizer.zero_grad()
-                    cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
-                    cls_loss = cls_loss.mean()
+                    cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                    total_correct += cls_correct_num
+                    total += total_num
                     reg_loss = reg_loss.mean()
 
-                    # loss = cls_loss + reg_loss
-                    loss = reg_loss
+                    # loss = reg_loss + cls_head_loss
+                    loss = cls_head_loss
                     if loss == 0 or not torch.isfinite(loss):
                         continue
 
@@ -232,7 +247,7 @@ def train(opt):
 
                     epoch_loss.append(float(loss))
 
-                    print(f"Step: {step}. Epoch: {epoch}/{opt.num_epochs}. Iter: {iter+1}. | {cls_loss.item()} {reg_loss.item()} {loss.item()}")
+                    print(f"Step: {step}. Epoch: {epoch}/{opt.num_epochs}. Iter: {iter+1}. | {reg_loss.item()} {cls_head_loss.item()} {loss.item()}")
 
                     current_lr = optimizer.param_groups[0]['lr']
 
@@ -247,10 +262,14 @@ def train(opt):
                     print(e)
                     continue
             scheduler.step(np.mean(epoch_loss))
+            print(f"Classification accuracy: {total_correct / total * 100:.2f}")
 
+            total_correct = 0
+            total = 0
             if epoch % opt.val_interval == 0:
                 model.eval()
                 loss_regression_ls = []
+                loss_cls_ls = []
                 for iter, data in enumerate(val_generator):
                     with torch.no_grad():
                         imgs = data['img']
@@ -260,18 +279,25 @@ def train(opt):
                             imgs = imgs.cuda()
                             annot = annot.cuda()
 
-                        cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
+                        cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                        total_correct += cls_correct_num
+                        total += total_num
                         reg_loss = reg_loss.mean()
 
-                        loss = reg_loss
+                        loss = reg_loss + cls_head_loss
                         loss_regression_ls.append(reg_loss.item())
+                        loss_cls_ls.append(cls_head_loss.item())
 
                 reg_loss = np.mean(loss_regression_ls)
-                loss = reg_loss
+                cls_head_loss = np.mean(loss_cls_ls)
+                # loss = reg_loss + cls_head_loss
+                loss = cls_head_loss
 
                 print(
-                    'Val. Epoch: {}/{}. Regression loss: {:1.5f}. Total loss: {:1.5f}'.format(
-                        epoch, opt.num_epochs, reg_loss, loss))
+                        'Val. Epoch: {}/{}. Reg loss: {:1.5f}. Cls head loss: {:1.5f}. Total loss: {:1.5f}'.format(
+                        epoch, opt.num_epochs, reg_loss, cls_head_loss, loss))
+                print(f"Classification accuracy: {total_correct / total * 100:.2f}")
+                print()
 
                 if loss + opt.es_min_delta < best_loss:
                     best_loss = loss

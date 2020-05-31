@@ -18,6 +18,7 @@ class EfficientDetBackbone(nn.Module):
         self.fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
         self.fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
         self.input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
+        # self.input_sizes = [512, 224, 768, 896, 1024, 1280, 1280, 1536]
         self.box_class_repeats = [3, 3, 3, 4, 4, 4, 5, 5]
         self.anchor_scale = [4., 4., 4., 4., 4., 4., 4., 5.]
         self.aspect_ratios = kwargs.get('ratios', [(1.0, 1.0), (1.4, 0.7), (0.7, 1.4)])
@@ -56,7 +57,7 @@ class EfficientDetBackbone(nn.Module):
 
         self.anchors = Anchors(anchor_scale=self.anchor_scale[compound_coef], **kwargs)
 
-        self.backbone_net = EfficientNet(self.backbone_compound_coef[compound_coef], load_weights)
+        self.backbone_net = EfficientNet(self.backbone_compound_coef[compound_coef], self.num_classes, load_weights)
 
     def freeze_bn(self):
         for m in self.modules():
@@ -66,7 +67,7 @@ class EfficientDetBackbone(nn.Module):
     def forward(self, inputs):
         max_size = inputs.shape[-1]
 
-        _, p3, p4, p5 = self.backbone_net(inputs)
+        _, p3, p4, p5, cls_result = self.backbone_net(inputs)
 
         features = (p3, p4, p5)
         features = self.bifpn(features)
@@ -75,7 +76,7 @@ class EfficientDetBackbone(nn.Module):
         classification = self.classifier(features)
         anchors = self.anchors(inputs, inputs.dtype)
 
-        return features, regression, classification, anchors
+        return features, regression, classification, cls_result, anchors
 
     def init_backbone(self, path):
         state_dict = torch.load(path)
