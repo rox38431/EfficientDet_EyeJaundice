@@ -81,23 +81,23 @@ class ModelWithLoss(nn.Module):
         self.cls_criterion = nn.CrossEntropyLoss()
 
     def forward(self, imgs, annotations, obj_list=None):  # Annotations is gt
-        _, regression, classification, cls_result, anchors = self.model(imgs)
+        features, regression, cls_result, anchors = self.model(imgs)
         cls_target = annotations[:, 0, -1]
         cls_target = cls_target.type(torch.LongTensor)
         cls_target = cls_target.cuda()
+
         if self.debug:
-            cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations,
+            reg_loss = self.criterion(regression, anchors, annotations,
                                                 imgs=imgs, obj_list=obj_list)
             cls_head_loss = self.cls_criterion(cls_result, cls_target)
         else:
-            cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations)
+            reg_loss = self.criterion(regression, anchors, annotations)
             cls_head_loss = self.cls_criterion(cls_result, cls_target)
 
         _, predicted = cls_result.max(1)
         total_num = cls_target.size(0)
-        # print(predicted.eq(cls_target).sum().item()/total_num * 100)
         cls_correct_num = predicted.eq(cls_target).sum().item()
-        return cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num
+        return reg_loss, cls_head_loss, cls_correct_num, total_num
 
 
 def train(opt):
@@ -122,7 +122,6 @@ def train(opt):
                   'num_workers': opt.num_workers}
 
     input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
-    # input_sizes = [512, 224, 768, 896, 1024, 1280, 1280, 1536]
     
     train_img_dir = "/tmp2/jojo/eye_data/raw/train"
     test_img_dir = "/tmp2/jojo/eye_data/raw/test"
@@ -196,8 +195,7 @@ def train(opt):
     # warp the model with loss function, to reduce the memory usage on gpu0 and speedup
     model = ModelWithLoss(model, debug=opt.debug)
 
-    if params.num_gpus > 0:
-        model = model.cuda()
+    model = model.cuda()
 
     if opt.optim == 'adamw':
         optimizer = torch.optim.AdamW(model.parameters(), opt.lr)
@@ -212,16 +210,15 @@ def train(opt):
     step = max(0, last_step)  # 0
     model.train()
 
-    num_iter_per_epoch = len(training_generator)
     present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
 
     try:
         for epoch in range(opt.num_epochs):
-            last_epoch = step // num_iter_per_epoch
-
             epoch_loss = []
+            total_loss = 0
             total_correct = 0
-            total = 0
+            total_cases = 0
+            iter_num = 0
             for iter, data in enumerate(training_generator):
                 try:
                     imgs = data['img']
@@ -231,13 +228,14 @@ def train(opt):
                     annot = annot.cuda()
 
                     optimizer.zero_grad()
-                    cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                    reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                    total_loss += cls_head_loss.item()
                     total_correct += cls_correct_num
-                    total += total_num
+                    total_cases += total_num
+                    iter_num += 1
                     reg_loss = reg_loss.mean()
-
-                    # loss = reg_loss + cls_head_loss
                     loss = cls_head_loss
+
                     if loss == 0 or not torch.isfinite(loss):
                         continue
 
@@ -247,22 +245,24 @@ def train(opt):
 
                     epoch_loss.append(float(loss))
 
-                    print(f"Step: {step}. Epoch: {epoch}/{opt.num_epochs}. Iter: {iter+1}. | {reg_loss.item()} {cls_head_loss.item()} {loss.item()}")
+                    # print(f"Step: {step}. Epoch: {epoch}/{opt.num_epochs}. Iter: {iter+1}. | {reg_loss.item()} {cls_head_loss.item()} {loss.item()}")
 
                     current_lr = optimizer.param_groups[0]['lr']
 
                     step += 1
 
+                    '''
                     if step % opt.save_interval == 0 and step > 0:
                         save_checkpoint(model, f'efficientdet-d{opt.compound_coef}_{present_time}_{str(epoch).zfill(3)}_{str(step).zfill(4)}.pth')
                         print('checkpoint...')
-
+                    '''
                 except Exception as e:
                     print('[Error]', traceback.format_exc())
                     print(e)
                     continue
-            scheduler.step(np.mean(epoch_loss))
-            print(f"Classification accuracy: {total_correct / total * 100:.2f}")
+            # scheduler.step(np.mean(epoch_loss))
+            scheduler.step(total_loss / iter_num)
+            print(f"Training loss: {total_loss / iter_num:.4f} | acc: {total_correct / total_cases * 100:.2f}")
 
             total_correct = 0
             total = 0
@@ -279,7 +279,7 @@ def train(opt):
                             imgs = imgs.cuda()
                             annot = annot.cuda()
 
-                        cls_loss, reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                        reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
                         total_correct += cls_correct_num
                         total += total_num
                         reg_loss = reg_loss.mean()
