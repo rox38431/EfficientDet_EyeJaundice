@@ -1,13 +1,12 @@
-# original author: signatrix
-# adapted from https://github.com/signatrix/efficientdet/blob/master/train.py
-# modified by Zylo117
-
 import datetime
 import time
 import os
 import argparse
 import traceback
 import cv2
+import glob
+import math
+import random
 
 import torch
 import yaml
@@ -36,7 +35,7 @@ class Params:
 def get_args():
     parser = argparse.ArgumentParser('Yet Another EfficientDet Pytorch: SOTA object detection network - Zylo117')
     parser.add_argument('-p', '--project', type=str, default='coco', help='project file that contains parameters')
-    parser.add_argument('-c', '--compound_coef', type=int, default=1, help='coefficients of efficientdet')
+    parser.add_argument('-c', '--compound_coef', type=int, default=0, help='coefficients of efficientdet')
     parser.add_argument('-n', '--num_workers', type=int, default=4, help='num_workers of dataloader')
     parser.add_argument('--batch_size', type=int, default=12, help='The number of images per batch among all devices')
     parser.add_argument('--head_only', type=boolean_string, default=False,
@@ -46,7 +45,7 @@ def get_args():
     parser.add_argument('--optim', type=str, default='adamw', help='select optimizer for training, '
                                                                    'suggest using \'admaw\' until the'
                                                                    ' very final stage then switch to \'sgd\'')
-    parser.add_argument('--num_epochs', type=int, default=120)
+    parser.add_argument('--epoch', type=int, default=120)
     parser.add_argument('--val_interval', type=int, default=1, help='Number of epoches between valing phases')
     parser.add_argument('--save_interval', type=int, default=500, help='Number of steps between saving')
     parser.add_argument('--es_min_delta', type=float, default=0.0,
@@ -54,7 +53,6 @@ def get_args():
     parser.add_argument('--es_patience', type=int, default=0,
                         help='Early stopping\'s parameter: number of epochs with no improvement after which training will be stopped. Set to 0 to disable this technique.')
     parser.add_argument('--gpu', type=str, default='0', help='gpu choosed to run the code')
-    parser.add_argument('--data_path', type=str, default='datasets/', help='the root folder of dataset')
     parser.add_argument('--log_path', type=str, default='logs/')
     parser.add_argument('-w', '--load_weights', type=str, default=None,
                         help='whether to load weights from a checkpoint, set None to initialize, set \'last\' to load last checkpoint')
@@ -102,6 +100,7 @@ class ModelWithLoss(nn.Module):
 
 def train(opt):
     print("Hi")
+    present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
     params = Params(f'projects/eye.yml')
 
     os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
@@ -123,34 +122,6 @@ def train(opt):
 
     input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
     
-    train_img_dir = "/tmp2/jojo/eye_data/raw/train"
-    test_img_dir = "/tmp2/jojo/eye_data/raw/test"
-    train_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
-    test_anno_txt_path = "/tmp2/jojo/eye_data/raw/test.txt"
-
-    transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
-                                    Augmenter(),
-                                    Resizer(input_sizes[opt.compound_coef])])
-
-    train_set = EyeDataset(train_img_dir, train_anno_txt_path, transform)
-    test_set = EyeDataset(test_img_dir, test_anno_txt_path, transform)
-    
-    training_generator = DataLoader(train_set, **training_params)
-    val_generator = DataLoader(test_set, **val_params)
-
-    '''
-    # Test to draw the image and bbox after loading dataset
-    first = train_set[244]
-    temp = first["img"].data.cpu().numpy() * 255
-    temp = cv2.cvtColor(temp, cv2.COLOR_RGB2BGR)
-    start_point = tuple(first["annot"][0, :2].data.cpu().numpy().astype(int))
-    end_point = tuple(first["annot"][0, 2:4].data.cpu().numpy().astype(int))
-    color = (255, 0, 0)
-    thickness = 2
-    temp = cv2.rectangle(temp, start_point, end_point, color, thickness) 
-    cv2.imwrite("temp.jpg", temp)
-    '''
-
     model = EfficientDetBackbone(num_classes=len(params.obj_list), compound_coef=opt.compound_coef,
                                  ratios=eval(params.anchors_ratios), scales=eval(params.anchors_scales))
 
@@ -169,8 +140,6 @@ def train(opt):
             ret = model.load_state_dict(torch.load(weights_path), strict=False)
         except RuntimeError as e:
             print(f'[Warning] Ignoring {e}')
-            print(
-                '[Warning] Don\'t panic if you see this, this might be because you load a pretrained weights with different number of classes. The rest of the weights should be loaded already.')
 
         print(f'[Info] loaded weights: {os.path.basename(weights_path)}, resuming checkpoint from step: {last_step}')
     else:
@@ -202,7 +171,132 @@ def train(opt):
     else:
         optimizer = torch.optim.SGD(model.parameters(), opt.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)  # unit is epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)  # unit is epoch
+    
+    torch.save({
+        "model_state_dict": model.model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        }, "init_weight.pth")
+
+    k = 5
+    train_img_list = glob.glob("/tmp2/jojo/eye_data/raw/train/*")
+    random.shuffle(train_img_list)
+    part_num = math.ceil(len(train_img_list) / k)
+    for i in range(k):
+        best_loss = 1e5
+
+        model.model.load_state_dict(torch.load("init_weight.pth")["model_state_dict"])
+        optimizer.load_state_dict(torch.load("init_weight.pth")["optimizer_state_dict"])
+        scheduler.load_state_dict(torch.load("init_weight.pth")["scheduler_state_dict"])
+        model.train()
+
+        sub_train_img_list = train_img_list[:i*part_num] + train_img_list[(i+1)*part_num:]
+        sub_test_img_list = train_img_list[i*part_num:(i+1)*part_num]
+
+        train_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
+        test_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
+
+        train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+                                    Augmenter(),
+                                    Resizer(input_sizes[opt.compound_coef])])
+        test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+                                             Augmenter(),
+                                             Resizer(input_sizes[opt.compound_coef])])
+
+        train_set = EyeDataset(sub_train_img_list, train_anno_txt_path, train_transform)
+        test_set = EyeDataset(sub_test_img_list, test_anno_txt_path, test_transform)
+        training_generator = DataLoader(train_set, **training_params)
+        test_generator = DataLoader(test_set, **val_params)
+
+        for epoch in range(opt.epoch):
+            total_correct = 0
+            total = 0
+            total_loss_ls = []
+            for data in training_generator:
+                imgs = data['img']
+                annot = data['annot']
+
+                imgs = imgs.cuda()
+                annot = annot.cuda()
+
+                optimizer.zero_grad()
+                reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                total_correct += cls_correct_num
+                total += total_num
+                reg_loss = reg_loss.mean()
+                loss = cls_head_loss + reg_loss
+                total_loss_ls.append(loss.item())
+
+                if loss == 0 or not torch.isfinite(loss):
+                    continue
+
+                loss.backward()
+                optimizer.step()
+            total_loss = np.mean(total_loss_ls)
+            scheduler.step(total_loss)
+            print(f"Epoch: {i}/{epoch}/{opt.epoch}")
+            print(f"Training loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
+
+            '''
+            model.eval()
+            total = 0
+            total_correct = 0
+            total_loss_ls = []
+            for data in val_generator:
+                with torch.no_grad():
+                    imgs = data['img'].cuda()
+                    annot = data['annot'].cuda()
+                    
+                    reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
+                    total_correct += cls_correct_num
+                    total += total_num
+                    reg_loss = reg_loss.mean()
+                    loss = reg_loss + cls_head_loss
+                    total_loss_ls.append(loss.item())
+            total_loss = np.mean(total_loss_ls)
+            print(f"Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
+            print()
+            '''
+        print("---------------------\n")
+    
+    if opt.optim == 'adamw':
+        optimizer = torch.optim.AdamW(model.parameters(), opt.lr)
+    else:
+        optimizer = torch.optim.SGD(model.parameters(), opt.lr, momentum=0.9, nesterov=True)
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)  # unit is epoch
+    
+    train_img_list = glob.glob("/tmp2/jojo/eye_data/raw/train/*")
+    test_img_list = glob.glob("/tmp2/jojo/eye_data/raw/test/*")
+    train_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
+    test_anno_txt_path = "/tmp2/jojo/eye_data/raw/test.txt"
+
+    train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+                                    Augmenter(),
+                                    Resizer(input_sizes[opt.compound_coef])])
+
+    test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+                                    Augmenter(),
+                                    Resizer(input_sizes[opt.compound_coef])])
+
+    train_set = EyeDataset(train_img_list, train_anno_txt_path, train_transform)
+    test_set = EyeDataset(test_img_list, test_anno_txt_path, test_transform)
+
+    training_generator = DataLoader(train_set, **training_params)
+    val_generator = DataLoader(test_set, **val_params)
+   
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True) 
+
+    ##########
+    # Fianl 
+    ##########
+
+    '''
+    checkpoint = torch.load(f"./init_weight/{present_time}.pth.tar")
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    '''
 
     epoch = 0
     best_loss = 1e5
@@ -210,10 +304,8 @@ def train(opt):
     step = max(0, last_step)  # 0
     model.train()
 
-    present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
-
     try:
-        for epoch in range(opt.num_epochs):
+        for epoch in range(opt.epoch):
             epoch_loss = []
             total_loss = 0
             total_correct = 0
@@ -226,15 +318,16 @@ def train(opt):
 
                     imgs = imgs.cuda()
                     annot = annot.cuda()
+                    print(imgs.shape, annot.shape)
 
                     optimizer.zero_grad()
                     reg_loss, cls_head_loss, cls_correct_num, total_num = model(imgs, annot, obj_list=params.obj_list)
-                    total_loss += cls_head_loss.item()
                     total_correct += cls_correct_num
                     total_cases += total_num
                     iter_num += 1
                     reg_loss = reg_loss.mean()
-                    loss = cls_head_loss
+                    loss = cls_head_loss + reg_loss
+                    total_loss += loss.item()
 
                     if loss == 0 or not torch.isfinite(loss):
                         continue
@@ -245,9 +338,7 @@ def train(opt):
 
                     epoch_loss.append(float(loss))
 
-                    # print(f"Step: {step}. Epoch: {epoch}/{opt.num_epochs}. Iter: {iter+1}. | {reg_loss.item()} {cls_head_loss.item()} {loss.item()}")
-
-                    current_lr = optimizer.param_groups[0]['lr']
+                    # current_lr = optimizer.param_groups[0]['lr']
 
                     step += 1
 
@@ -262,7 +353,8 @@ def train(opt):
                     continue
             # scheduler.step(np.mean(epoch_loss))
             scheduler.step(total_loss / iter_num)
-            print(f"Training loss: {total_loss / iter_num:.4f} | acc: {total_correct / total_cases * 100:.2f}")
+            print(f"Epoch: {epoch}/{opt.epoch}")
+            print(f"Training loss: {total_loss / iter_num:.6f} | acc: {total_correct / total_cases * 100:.2f}")
 
             total_correct = 0
             total = 0
@@ -270,6 +362,7 @@ def train(opt):
                 model.eval()
                 loss_regression_ls = []
                 loss_cls_ls = []
+                loss_total_ls = []
                 for iter, data in enumerate(val_generator):
                     with torch.no_grad():
                         imgs = data['img']
@@ -283,24 +376,24 @@ def train(opt):
                         total_correct += cls_correct_num
                         total += total_num
                         reg_loss = reg_loss.mean()
-
                         loss = reg_loss + cls_head_loss
                         loss_regression_ls.append(reg_loss.item())
                         loss_cls_ls.append(cls_head_loss.item())
+                        loss_total_ls.append(loss.item())
 
                 reg_loss = np.mean(loss_regression_ls)
                 cls_head_loss = np.mean(loss_cls_ls)
+                total_loss = np.mean(loss_total_ls)
                 # loss = reg_loss + cls_head_loss
-                loss = cls_head_loss
 
-                print(
-                        'Val. Epoch: {}/{}. Reg loss: {:1.5f}. Cls head loss: {:1.5f}. Total loss: {:1.5f}'.format(
-                        epoch, opt.num_epochs, reg_loss, cls_head_loss, loss))
-                print(f"Classification accuracy: {total_correct / total * 100:.2f}")
+                # print(
+                #         'Val. Epoch: {}/{}. Reg loss: {:1.5f}. Cls head loss: {:1.5f}. Total loss: {:1.5f}'.format(
+                #         epoch, opt.num_epochs, reg_loss, cls_head_loss, loss))
+                print(f"Validation loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
                 print()
 
-                if loss + opt.es_min_delta < best_loss:
-                    best_loss = loss
+                if total_loss + opt.es_min_delta < best_loss:
+                    best_loss = total_loss
                     best_epoch = epoch
 
                     save_checkpoint(model, f'efficientdet-d{opt.compound_coef}_{present_time}_{str(epoch).zfill(3)}_{str(step).zfill(4)}.pth')

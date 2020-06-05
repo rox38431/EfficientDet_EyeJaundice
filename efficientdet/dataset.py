@@ -10,10 +10,10 @@ import os
 from PIL import Image
 
 class EyeDataset(Dataset):
-    def __init__(self, image_dir, anno_txt_path, transform):
+    def __init__(self, img_list, anno_txt_path, transform):
         self.transform = transform
-        self.image_dir = image_dir
-        self.imgs = glob.glob(f"{image_dir}/*")
+        self.imgs = img_list
+        self.image_dir = os.path.dirname(self.imgs[0])
         self.annos = {}
         self.idx_to_name = []
 
@@ -21,6 +21,7 @@ class EyeDataset(Dataset):
             file_name = os.path.basename(img_path)
             self.annos[file_name] = []
 
+        not_exist_count = 0
         with open(anno_txt_path, "r") as fp:
             for line in fp:
                 line = line.strip()
@@ -29,7 +30,7 @@ class EyeDataset(Dataset):
                 label = words[1:]
 
                 if (file_name not in self.annos):
-                    print(f"{file_name} alreay been deleted.")
+                    not_exist_count += 1
                     continue
 
                 self.idx_to_name.append(file_name)
@@ -40,9 +41,9 @@ class EyeDataset(Dataset):
                     x2 = int(label[i * 5 + 2])
                     y2 = int(label[i * 5 + 3])
                     category = int(label[i * 5 + 4])
-                    # category = 0
                     self.annos[file_name].append([x1, y1, x2, y2, category])
                 self.annos[file_name] = np.array(self.annos[file_name], dtype="float64")
+        print(f"Not exist img num: {not_exist_count}")
     
     def __len__(self):
         return len(self.imgs)
