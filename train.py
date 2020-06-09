@@ -57,6 +57,7 @@ def get_args():
     parser.add_argument('-w', '--load_weights', type=str, default=None,
                         help='whether to load weights from a checkpoint, set None to initialize, set \'last\' to load last checkpoint')
     parser.add_argument('--saved_path', type=str, default='logs/')
+    parser.add_argument('--dataset_path', type=str, default='./../eye_data/raw')
     parser.add_argument('--debug', type=boolean_string, default=False, help='whether visualize the predicted boxes of training, '
                                                                   'the output images will be in test/')
 
@@ -180,7 +181,7 @@ def train(opt):
         }, "init_weight.pth")
 
     k = 5
-    train_img_list = glob.glob("/tmp2/jojo/eye_data/raw/train/*")
+    train_img_list = glob.glob(f"{opt.dataset_path}/train/*")
     random.shuffle(train_img_list)
     part_num = math.ceil(len(train_img_list) / k)
     for i in range(k):
@@ -194,8 +195,8 @@ def train(opt):
         sub_train_img_list = train_img_list[:i*part_num] + train_img_list[(i+1)*part_num:]
         sub_test_img_list = train_img_list[i*part_num:(i+1)*part_num]
 
-        train_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
-        test_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
+        train_anno_txt_path = f"{opt.dataset_path}/train.txt"
+        test_anno_txt_path = f"{opt.dataset_path}/train.txt"
 
         train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
@@ -207,9 +208,10 @@ def train(opt):
         train_set = EyeDataset(sub_train_img_list, train_anno_txt_path, train_transform)
         test_set = EyeDataset(sub_test_img_list, test_anno_txt_path, test_transform)
         training_generator = DataLoader(train_set, **training_params)
-        test_generator = DataLoader(test_set, **val_params)
+        val_generator = DataLoader(test_set, **val_params)
 
         for epoch in range(opt.epoch):
+            model.train()
             total_correct = 0
             total = 0
             total_loss_ls = []
@@ -238,13 +240,13 @@ def train(opt):
             print(f"Epoch: {i}/{epoch}/{opt.epoch}")
             print(f"Training loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
 
-            '''
+            ''''''
             model.eval()
-            total = 0
-            total_correct = 0
-            total_loss_ls = []
-            for data in val_generator:
-                with torch.no_grad():
+            with torch.no_grad():
+                total = 0
+                total_correct = 0
+                total_loss_ls = []
+                for data in val_generator:
                     imgs = data['img'].cuda()
                     annot = data['annot'].cuda()
                     
@@ -254,11 +256,10 @@ def train(opt):
                     reg_loss = reg_loss.mean()
                     loss = reg_loss + cls_head_loss
                     total_loss_ls.append(loss.item())
-            total_loss = np.mean(total_loss_ls)
-            print(f"Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
-            print()
-            '''
-        print("---------------------\n")
+                total_loss = np.mean(total_loss_ls)
+                print(f"Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}")
+                print()
+            ''''''
     
     if opt.optim == 'adamw':
         optimizer = torch.optim.AdamW(model.parameters(), opt.lr)
@@ -267,10 +268,10 @@ def train(opt):
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)  # unit is epoch
     
-    train_img_list = glob.glob("/tmp2/jojo/eye_data/raw/train/*")
-    test_img_list = glob.glob("/tmp2/jojo/eye_data/raw/test/*")
-    train_anno_txt_path = "/tmp2/jojo/eye_data/raw/train.txt"
-    test_anno_txt_path = "/tmp2/jojo/eye_data/raw/test.txt"
+    train_img_list = glob.glob(f"{opt.dataset_path}/train/*")
+    test_img_list = glob.glob(f"{opt.dataset_path}/test/*")
+    train_anno_txt_path = f"{opt.dataset_path}/train.txt"
+    test_anno_txt_path = f"{opt.dataset_path}/test.txt"
 
     train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
