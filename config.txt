@@ -2,3 +2,4 @@ v1 only classification, compound 0, lr 1e-3, epoch 120, patience 3
 v2 classification and bbox, compound 0, lr 1e-3, epoch 120, patience 10 
 v3 classification and bbox, compound 0, lr 1e-2, epoch 120, patience 5
 v4 classification and bbox, add C-V, compound 0, lr 1e-2, epoch 120, patience 5
+v5 classification and bbox, add C-V, compound 0, lr 1e-2, epoch 120, patience 5
