@@ -13,7 +13,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater
+from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomScale, randomBlur
 from backbone import EfficientDetBackbone
 # from tensorboardX import SummaryWriter
 import numpy as np
@@ -78,35 +78,36 @@ class ModelWithLoss(nn.Module):
         return reg_loss, cls_head_loss, cls_correct_num, total_num
 
 
-def prepare_dir(opt, present_time):
-    opt.saved_path = f"./{opt.saved_path}/{present_time}"
-    os.makedirs(opt.saved_path, exist_ok=False)
+def prepare_dir(args, present_time):
+    args.saved_path = f"./{args.saved_path}/{present_time}"
+    os.makedirs(args.saved_path, exist_ok=False)
 
 
-def train(opt):
+def train(args):
     print("Hi")
     present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
     params = Params(f'projects/eye.yml')
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    torch.manual_seed(20)
 
-    prepare_dir(opt, present_time)
+    prepare_dir(args, present_time)
 
-    training_params = {'batch_size': opt.batch_size,
+    training_params = {'batch_size': args.batch_size,
                        'shuffle': True,
                        'drop_last': True,
                        'collate_fn': collater,
-                       'num_workers': opt.num_workers}
+                       'num_workers': args.num_workers}
 
-    val_params = {'batch_size': opt.batch_size,
+    val_params = {'batch_size': args.batch_size,
                   'shuffle': False,
                   'drop_last': True,
                   'collate_fn': collater,
-                  'num_workers': opt.num_workers}
+                  'num_workers': args.num_workers}
 
     input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
     
-    model = EfficientDetBackbone(num_classes=len(params.obj_list), compound_coef=opt.compound_coef,
+    model = EfficientDetBackbone(num_classes=len(params.obj_list), compound_coef=args.compound_coef,
                                  ratios=eval(params.anchors_ratios), scales=eval(params.anchors_scales))
 
     # load last weights
@@ -139,21 +140,21 @@ def train(opt):
     model = ModelWithLoss(model)
     model = model.cuda()
 
-    if opt.optim == 'adamw':
-        optimizer = torch.optim.AdamW(model.parameters(), opt.lr)
+    if args.optim == 'adamw':
+        optimizer = torch.optim.AdamW(model.parameters(), args.lr)
     else:
-        optimizer = torch.optim.SGD(model.parameters(), opt.lr, momentum=0.9, nesterov=True)
+        optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)  # unit is epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)  # unit is epoch
     
     torch.save({
         "model_state_dict": model.model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
-        }, f"{opt.saved_path}/init_weight.pth")
+        }, f"{args.saved_path}/init_weight.pth")
 
     k = 10
-    train_img_list = glob.glob(f"{opt.dataset_path}/train/*")
+    train_img_list = glob.glob(f"{args.dataset_path}/train/*")
     random.shuffle(train_img_list)
     part_num = math.ceil(len(train_img_list) / k)
     last_acc = []
@@ -161,30 +162,32 @@ def train(opt):
     for i in range(k):
         best_loss = 1e5
 
-        model.model.load_state_dict(torch.load(f"{opt.saved_path}/init_weight.pth")["model_state_dict"])
-        optimizer.load_state_dict(torch.load(f"{opt.saved_path}/init_weight.pth")["optimizer_state_dict"])
-        scheduler.load_state_dict(torch.load(f"{opt.saved_path}/init_weight.pth")["scheduler_state_dict"])
+        model.model.load_state_dict(torch.load(f"{args.saved_path}/init_weight.pth")["model_state_dict"])
+        optimizer.load_state_dict(torch.load(f"{args.saved_path}/init_weight.pth")["optimizer_state_dict"])
+        scheduler.load_state_dict(torch.load(f"{args.saved_path}/init_weight.pth")["scheduler_state_dict"])
         model.train()
 
         sub_train_img_list = train_img_list[:i*part_num] + train_img_list[(i+1)*part_num:]
         sub_test_img_list = train_img_list[i*part_num:(i+1)*part_num]
 
-        train_anno_txt_path = f"{opt.dataset_path}/train.txt"
-        test_anno_txt_path = f"{opt.dataset_path}/train.txt"
+        train_anno_txt_path = f"{args.dataset_path}/train.txt"
+        test_anno_txt_path = f"{args.dataset_path}/train.txt"
 
         train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
-                                    Resizer(input_sizes[opt.compound_coef])])
+                                    randomScale(),
+                                    randomBlur(),
+                                    Resizer(input_sizes[args.compound_coef])])
         test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                              Augmenter(),
-                                             Resizer(input_sizes[opt.compound_coef])])
+                                             Resizer(input_sizes[args.compound_coef])])
 
         train_set = EyeDataset(sub_train_img_list, train_anno_txt_path, train_transform)
         test_set = EyeDataset(sub_test_img_list, test_anno_txt_path, test_transform)
         training_generator = DataLoader(train_set, **training_params)
         val_generator = DataLoader(test_set, **val_params)
 
-        for epoch in range(opt.epoch):
+        for epoch in range(args.epoch):
             model.train()
             total_correct = 0
             total = 0
@@ -212,7 +215,7 @@ def train(opt):
             total_loss = np.mean(total_loss_ls)
             scheduler.step(total_loss)
             with open(f'./logs/{present_time}/cv_log.txt', 'a') as fp:
-                fp.write(f"Epoch: {i}/{epoch}/{opt.epoch}\n")
+                fp.write(f"Epoch: {i}/{epoch}/{args.epoch}\n")
                 fp.write(f"Training loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}\n")
 
             model.eval()
@@ -235,7 +238,7 @@ def train(opt):
                 with open(f'./logs/{present_time}/cv_log.txt', 'a') as fp:
                     fp.write(f"Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}\n\n")
 
-                if (epoch == opt.epoch-1):
+                if (epoch == args.epoch-1):
                     last_loss.append(total_loss)
                     last_acc.append(total_correct / total *100)
 
@@ -246,5 +249,5 @@ def train(opt):
 
 
 if __name__ == '__main__':
-    opt = get_args()
-    train(opt)
+    args = get_args()
+    train(args)

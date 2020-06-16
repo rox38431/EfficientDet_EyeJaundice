@@ -13,7 +13,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater
+from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomBlur, randomScale
 from backbone import EfficientDetBackbone
 # from tensorboardX import SummaryWriter
 import numpy as np
@@ -86,8 +86,11 @@ class ModelWithLoss(nn.Module):
 
 def train(args):
     assert args.weight_path, 'must indicate the path of initial weight'
-    os.remove(f'{args.weight_path}/train_log.txt')
-    os.remove(f'{args.weight_path}/pre_trained_weight.pth')
+    if (os.path.exists(f'{args.weight_path}/train_log.txt')):
+        os.remove(f'{args.weight_path}/train_log.txt')
+    if (os.path.exists(f'{args.weight_path}/pre_trained_weight.pth')):
+        os.remove(f'{args.weight_path}/pre_trained_weight.pth')
+    torch.manual_seed(20)
     print("Hi")
     present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
     params = Params(f'projects/eye.yml')
@@ -121,19 +124,26 @@ def train(args):
     else:
         optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)  # unit is epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)  # unit is epoch
     
     img_list = glob.glob(f"{args.dataset_path}/train/*")
     random.shuffle(img_list)
     val_num = int(len(img_list) / 5)
     train_img_list = img_list[val_num:]
     val_img_list = img_list[:val_num]
-
     train_anno_txt_path = f"{args.dataset_path}/train.txt"
     val_anno_txt_path = f"{args.dataset_path}/train.txt"
+    '''
+    train_img_list = glob.glob(f"{args.dataset_path}/train/*")
+    val_img_list = glob.glob(f"{args.dataset_path}/test/*")
+    train_anno_txt_path = f"{args.dataset_path}/train.txt"
+    val_anno_txt_path = f"{args.dataset_path}/test.txt"
+    '''
 
     train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
+                                    randomBlur(),
+                                    randomScale(),
                                     Resizer(input_sizes[args.compound_coef])])
 
     val_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),

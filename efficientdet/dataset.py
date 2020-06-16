@@ -1,5 +1,6 @@
 import os
 import torch
+import random
 import numpy as np
 
 from torch.utils.data import Dataset, DataLoader
@@ -109,6 +110,28 @@ class Resizer(object):
         annots[:, :4] *= scale
 
         return {'img': torch.from_numpy(new_image).to(torch.float32), 'annot': torch.from_numpy(annots), 'scale': scale}
+
+
+class randomScale(object):
+    def __call__(self, sample, scale_x=0.5):
+        if (np.random.rand() < scale_x):
+            image, annots = sample['img'], sample['annot']
+            h, w, c = image.shape
+            scale = random.uniform(0.8,1.2)
+            image = cv2.resize(image, (int(w * scale), h))  # order of resize is width, height
+            annots[:, 0] *= scale
+            annots[:, 2] *= scale
+            sample = {'img': image, 'annot': annots}
+        return sample
+
+
+class randomBlur(object):
+    def __call__(self, sample, blur_x=0.5):
+        if (np.random.rand() < blur_x):
+            image, annots = sample['img'], sample['annot']
+            image = cv2.blur(image,(5,5))
+            sample = {'img': image, 'annot': annots}
+        return sample
 
 
 class Augmenter(object):
