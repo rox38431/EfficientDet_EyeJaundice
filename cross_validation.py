@@ -13,7 +13,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomScale, randomBlur
+from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomScaleWidth, randomBlur
 from backbone import EfficientDetBackbone
 # from tensorboardX import SummaryWriter
 import numpy as np
@@ -23,6 +23,14 @@ from efficientdet.loss import FocalLoss
 from utils.sync_batchnorm import patch_replication_callback
 from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, init_weights
 
+
+torch.manual_seed(20)
+torch.cuda.manual_seed(20)
+torch.cuda.manual_seed_all(20)
+np.random.seed(20)
+random.seed(20)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 class Params:
     def __init__(self, project_file):
@@ -89,7 +97,12 @@ def train(args):
     params = Params(f'projects/eye.yml')
 
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    torch.manual_seed(20)
+    torch.cuda.manual_seed(20)
+    torch.cuda.manual_seed_all(20)
+    np.random.seed(20)
+    random.seed(20)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     prepare_dir(args, present_time)
 
@@ -155,8 +168,18 @@ def train(args):
 
     k = 10
     train_img_list = glob.glob(f"{args.dataset_path}/train/*")
-    random.shuffle(train_img_list)
-    part_num = math.ceil(len(train_img_list) / k)
+    normal_img_list = []
+    yellow_img_list = []
+    for img in train_img_list:
+        if (img.find('n_') != -1):
+            normal_img_list.append(img)
+        else:
+            yellow_img_list.append(img)
+    random.shuffle(normal_img_list)
+    random.shuffle(yellow_img_list)
+    normal_part_num = math.ceil(len(normal_img_list) / k)
+    yellow_part_num = math.ceil(len(yellow_img_list) / k)
+
     last_acc = []
     last_loss = []
     for i in range(k):
@@ -167,15 +190,21 @@ def train(args):
         scheduler.load_state_dict(torch.load(f"{args.saved_path}/init_weight.pth")["scheduler_state_dict"])
         model.train()
 
-        sub_train_img_list = train_img_list[:i*part_num] + train_img_list[(i+1)*part_num:]
-        sub_test_img_list = train_img_list[i*part_num:(i+1)*part_num]
+        sub_train_img_list = normal_img_list[:i*normal_part_num] + normal_img_list[(i+1)*normal_part_num:] + yellow_img_list[:i*yellow_part_num] + yellow_img_list[(i+1)*yellow_part_num:]
+        sub_test_img_list = normal_img_list[i*normal_part_num:(i+1)*normal_part_num] + yellow_img_list[i*yellow_part_num:(i+1)*yellow_part_num]
+        random.shuffle(sub_train_img_list)
+        random.shuffle(sub_test_img_list)
+        print("---")
+        for img in sub_test_img_list:
+            print(img)
+        print("---")
 
         train_anno_txt_path = f"{args.dataset_path}/train.txt"
         test_anno_txt_path = f"{args.dataset_path}/train.txt"
 
         train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
-                                    randomScale(),
+                                    randomScaleWidth(),
                                     randomBlur(),
                                     Resizer(input_sizes[args.compound_coef])])
         test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
@@ -186,6 +215,7 @@ def train(args):
         test_set = EyeDataset(sub_test_img_list, test_anno_txt_path, test_transform)
         training_generator = DataLoader(train_set, **training_params)
         val_generator = DataLoader(test_set, **val_params)
+
 
         for epoch in range(args.epoch):
             model.train()
