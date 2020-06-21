@@ -1,6 +1,11 @@
 2020_06_15_13_23_28: lr 0.01 / compound_coef 0 / random_seed 20 / lr_scheduler_patience 5 | 88.33% (0.38) | 87.50% (0.399616)
 2020_06_16_00_46_06: lr 0.01 / compound_coef 0 / data_aug / random_seed 20 / lr_scheduler_patience 10 (test with 7) | 90.28% (0.32) | 89.58% (0.301406)
 2020_06_16_11_13_42: lr 0.01 / compound_coef 0 / data_aug / random_seed 20(20) / lr_scheduler_patience 7
-2020_06_16_11_20_27: lr 0.01 / compound_coef 0 / data_aug / random_seed 20(20) / lr_scheduler_patience 10
-2020_06_17_18_09_20: lr 0.01 / compound_coef 0 / data_aug / fix_all_random_seed 20 / lr_scheduler_patience 10
-2020_06_17_23_44_57: lr 0.01 / compound_coef 0 / data_aug / fix_all_random_seed 20 / lr_scheduler_patience 10 / balance cv partition number
+
+2020_06_17_23_44_57: lr 0.01 / c 0 / p 10 / data_aug(scale, flip, blur) / all seed 20 / balanced cv partition | 87.92% (0.41) | 90.62% (0.312803) 
+
+2020_06_18_09_26_39: lr 0.01 / c 0 / p 7 / data_aug(scale, flip, blur) / all seed 20 / balanced cv partition | 88.19% (0.33) | 90.62% (0.390713)
+2020_06_18_11_22_20: lr 0.01 / c 0 / p 10 / data_aug(scale, flip, blur) / all seed 20 / balanced cv partition | 88.89% (0.37) | 90.62% (0.341839)
+2020_06_18_11_26_34: lr 0.01 / c 0 / p 10 / data_aug(scale, flip, blur, brightness) / all seed 20 / balanced cv partition | 89.44% (0.39) | 87.50% (0.378365)
+2020_06_18_14_02_42: lr 0.01 / c 0 / p 10 / data_aug(scale, flip, blur, brightness, saturation, hue) / all seed 20 / balanced cv partition | 91.11% (0.31) | 91.67% (0.371591) 
+

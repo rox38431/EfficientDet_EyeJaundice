@@ -21,6 +21,14 @@ from efficientdet.loss import FocalLoss
 from utils.sync_batchnorm import patch_replication_callback
 from utils.utils import replace_w_sync_bn, CustomDataParallel, init_weights
 
+torch.manual_seed(20)
+torch.cuda.manual_seed(20)
+torch.cuda.manual_seed_all(20)
+np.random.seed(20)
+random.seed(20)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 class Params:
     def __init__(self, project_file):
         self.params = yaml.safe_load(open(project_file).read())
@@ -74,6 +82,8 @@ class ModelWithLoss(nn.Module):
 
 def main(args):
     print("Hi")
+    if (os.path.exists(f"{args.weight_path}/test_log.out")):
+        os.remove(f"{args.weight_path}/test_log.out")
     assert args.weight_path, 'must indicate the path of pre-trained weight'
     params = Params(f'projects/eye.yml')
 
@@ -109,10 +119,11 @@ def main(args):
     test_img_list = glob.glob(f'{args.dataset_path}/test/*')
     test_anno_txt_path = f'{args.dataset_path}/test.txt'
     
-    test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+    test_transform = transforms.Compose([# Normalizer(mean=params.mean, std=params.std),
                                          Augmenter(),
+                                         Normalizer(mean=params.mean, std=params.std),
                                          Resizer(input_sizes[args.compound_coef])])
-
+    
     test_set = EyeDataset(test_img_list, test_anno_txt_path, test_transform)
     test_generator = DataLoader(test_set, **test_params)
 
@@ -133,7 +144,8 @@ def main(args):
             loss = reg_loss + cls_head_loss
             total_loss_ls.append(loss.item())
         total_loss = np.mean(total_loss_ls)
-        print(f'Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}')
+        with open(f"{args.weight_path}/test_log.out", 'a') as fp:
+            fp.write(f'Testing loss: {total_loss:.6f} | acc: {total_correct / total * 100:.2f}\n')
 
 
 if __name__ == '__main__':

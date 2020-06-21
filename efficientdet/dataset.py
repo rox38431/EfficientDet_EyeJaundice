@@ -2,6 +2,7 @@ import os
 import torch
 import random
 import numpy as np
+import uuid
 
 from torch.utils.data import Dataset, DataLoader
 from pycocotools.coco import COCO
@@ -53,7 +54,7 @@ class EyeDataset(Dataset):
         file_name = self.idx_to_name[idx]
         img = cv2.imread(f"{self.image_dir}/{file_name}")  # order: h, w, c
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.
+        # img = img.astype(np.float32) / 255.
         annot = self.annos[file_name]
         sample = {'img': img, 'annot': annot}
         sample = self.transform(sample)
@@ -112,7 +113,7 @@ class Resizer(object):
         return {'img': torch.from_numpy(new_image).to(torch.float32), 'annot': torch.from_numpy(annots), 'scale': scale}
 
 
-class randomScale(object):
+class randomScaleWidth(object):  # random scale width of image
     def __call__(self, sample, scale_x=0.5):
         if (np.random.rand() < scale_x):
             image, annots = sample['img'], sample['annot']
@@ -125,16 +126,93 @@ class randomScale(object):
         return sample
 
 
+class randomScaleHeigh(object):
+    def __call__(self, sample, scale_y=0.5):
+        if (np.random.rand() < scale_y):
+            image, annots = sample['img'], sample['annot']
+            h, w, c = image.shape
+            scale = random.uniform(0.8, 1.2)
+            image = cv2.resize(image, (w, int(h * scale)))
+            annots[:, 1] *= scale
+            annots[:, 3] *= scale
+            sample = {'img': image, 'annot': annots}
+        return sample
+
+
 class randomBlur(object):
     def __call__(self, sample, blur_x=0.5):
         if (np.random.rand() < blur_x):
             image, annots = sample['img'], sample['annot']
             image = cv2.blur(image,(5,5))
             sample = {'img': image, 'annot': annots}
+
+            # image = image.astype(np.float32) 
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # cv2.imwrite(f'img/{uuid.uuid1()}.jpg', image)
+
         return sample
 
 
-class Augmenter(object):
+class randomBrightness(object):
+    def __call__(self, sample, bright_x=0.5):
+        if (np.random.rand() < bright_x):
+            image, annots = sample['img'], sample['annot']
+            image = image.astype(np.float32)
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            h, s, v = cv2.split(hsv)
+            adjust = random.choice([0.8,1.5])
+            v = v * adjust
+            v = np.clip(v, 0, 255).astype(hsv.dtype)
+            hsv = cv2.merge((h, s, v))
+            image = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            sample = {'img': image, 'annot': annots}
+
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # cv2.imwrite(f'img/{uuid.uuid1()}.jpg', image)
+
+        return sample
+
+class randomSaturation(object):
+    def __call__(self, sample, saturation_x=0.5):
+        if (np.random.rand() < saturation_x):
+            image, annots = sample['img'], sample['annot']
+            image = image.astype(np.float32)
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            h, s, v = cv2.split(hsv)
+            adjust = random.choice([0.8,1.5])
+            s = s * adjust
+            s = np.clip(s, 0, 255).astype(hsv.dtype)
+            hsv = cv2.merge((h, s, v))
+            image = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            sample = {'img': image, 'annot': annots}
+
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # cv2.imwrite(f'img/S_{uuid.uuid1()}.jpg', image)
+
+        return sample
+
+
+class randomHue(object):
+    def __call__(self, sample, hue_x=0.5):
+        if (np.random.rand() < hue_x):
+            image, annots = sample['img'], sample['annot']
+            image = image.astype(np.float32)
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            h, s, v = cv2.split(hsv)
+            adjust = random.choice([0.8, 1.5])
+            h = h * adjust
+            h = np.clip(h, 0, 255).astype(hsv.dtype)
+            hsv = cv2.merge((h, s, v))
+            image = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            sample = {'img': image, 'annot': annots}
+
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # cv2.imwrite(f'img/H_{uuid.uuid1()}.jpg', image)
+
+        return sample
+
+
+class Augmenter(object):  # random horizontal flip
     """Convert ndarrays in sample to Tensors."""
 
     def __call__(self, sample, flip_x=0.5):
@@ -165,5 +243,7 @@ class Normalizer(object):
 
     def __call__(self, sample):
         image, annots = sample['img'], sample['annot']
+        image = np.clip(image, 0, 255)
+        image = image.astype(np.float32) / 255.
 
         return {'img': ((image.astype(np.float32) - self.mean) / self.std), 'annot': annots}

@@ -13,7 +13,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomScaleWidth, randomBlur
+from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomScaleWidth, randomBlur, randomBrightness, randomSaturation, randomHue
 from backbone import EfficientDetBackbone
 # from tensorboardX import SummaryWriter
 import numpy as np
@@ -24,11 +24,11 @@ from utils.sync_batchnorm import patch_replication_callback
 from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, init_weights
 
 
-torch.manual_seed(20)
-torch.cuda.manual_seed(20)
-torch.cuda.manual_seed_all(20)
-np.random.seed(20)
-random.seed(20)
+torch.manual_seed(40)
+torch.cuda.manual_seed(40)
+torch.cuda.manual_seed_all(40)
+np.random.seed(40)
+random.seed(40)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
@@ -45,6 +45,7 @@ def get_args():
     parser.add_argument('-c', '--compound_coef', type=int, default=0, help='coefficients of efficientdet')
     parser.add_argument('-n', '--num_workers', type=int, default=4, help='num_workers of dataloader')
     parser.add_argument('-b', '--batch_size', type=int, default=12, help='The number of images per batch among all devices')
+    parser.add_argument('-p', '--patience', type=int, default=5, help='patience for lr scheduler')
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--optim', type=str, default='adamw', help='select optimizer for training, '
                                                                    'suggest using \'admaw\' until the'
@@ -158,7 +159,7 @@ def train(args):
     else:
         optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)  # unit is epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=args.patience, verbose=True)  # unit is epoch
     
     torch.save({
         "model_state_dict": model.model.state_dict(),
@@ -202,13 +203,18 @@ def train(args):
         train_anno_txt_path = f"{args.dataset_path}/train.txt"
         test_anno_txt_path = f"{args.dataset_path}/train.txt"
 
-        train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+        train_transform = transforms.Compose([# Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
                                     randomScaleWidth(),
                                     randomBlur(),
+                                    randomBrightness(),
+                                    randomHue(),
+                                    randomSaturation(),
+                                    Normalizer(mean=params.mean, std=params.std),
                                     Resizer(input_sizes[args.compound_coef])])
-        test_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+        test_transform = transforms.Compose([# Normalizer(mean=params.mean, std=params.std),
                                              Augmenter(),
+                                             Normalizer(mean=params.mean, std=params.std),
                                              Resizer(input_sizes[args.compound_coef])])
 
         train_set = EyeDataset(sub_train_img_list, train_anno_txt_path, train_transform)

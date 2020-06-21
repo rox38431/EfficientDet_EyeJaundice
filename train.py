@@ -13,7 +13,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomBlur, randomScale
+from efficientdet.dataset import EyeDataset, Resizer, Normalizer, Augmenter, collater, randomBlur, randomScaleWidth, randomBrightness, randomSaturation, randomHue
 from backbone import EfficientDetBackbone
 # from tensorboardX import SummaryWriter
 import numpy as np
@@ -23,6 +23,13 @@ from efficientdet.loss import FocalLoss
 from utils.sync_batchnorm import patch_replication_callback
 from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, init_weights
 
+torch.manual_seed(20)
+torch.cuda.manual_seed(20)
+torch.cuda.manual_seed_all(20)
+np.random.seed(20)
+random.seed(20)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 class Params:
     def __init__(self, project_file):
@@ -36,6 +43,7 @@ def get_args():
     parser = argparse.ArgumentParser('EfficientDet for eye jaundiance')
     parser.add_argument('-c', '--compound_coef', type=int, default=0, help='coefficients of efficientdet')
     parser.add_argument('-n', '--num_workers', type=int, default=4, help='num_workers of dataloader')
+    parser.add_argument('-p', '--patience', type=int, default=5, help='patience for lr scheduler')
     parser.add_argument('--batch_size', type=int, default=12, help='The number of images per batch among all devices')
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--optim', type=str, default='adamw', help='select optimizer for training, '
@@ -90,7 +98,6 @@ def train(args):
         os.remove(f'{args.weight_path}/train_log.txt')
     if (os.path.exists(f'{args.weight_path}/pre_trained_weight.pth')):
         os.remove(f'{args.weight_path}/pre_trained_weight.pth')
-    torch.manual_seed(20)
     print("Hi")
     present_time = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
     params = Params(f'projects/eye.yml')
@@ -124,30 +131,38 @@ def train(args):
     else:
         optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)  # unit is epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=args.patience, verbose=True)  # unit is epoch
     
     img_list = glob.glob(f"{args.dataset_path}/train/*")
-    random.shuffle(img_list)
-    val_num = int(len(img_list) / 5)
-    train_img_list = img_list[val_num:]
-    val_img_list = img_list[:val_num]
+    normal_img_list = []
+    yellow_img_list = []
+    for img in img_list:
+        if (img.find("n_") != -1):
+            normal_img_list.append(img)
+        else:
+            yellow_img_list.append(img)
+    random.shuffle(normal_img_list)
+    random.shuffle(yellow_img_list)
+    normal_val_num = int(len(normal_img_list) / 5)
+    yellow_val_num = int(len(yellow_img_list) / 5)
+    train_img_list = normal_img_list[normal_val_num:] + yellow_img_list[yellow_val_num:]
+    val_img_list = normal_img_list[:normal_val_num] + yellow_img_list[:yellow_val_num]
     train_anno_txt_path = f"{args.dataset_path}/train.txt"
     val_anno_txt_path = f"{args.dataset_path}/train.txt"
-    '''
-    train_img_list = glob.glob(f"{args.dataset_path}/train/*")
-    val_img_list = glob.glob(f"{args.dataset_path}/test/*")
-    train_anno_txt_path = f"{args.dataset_path}/train.txt"
-    val_anno_txt_path = f"{args.dataset_path}/test.txt"
-    '''
 
-    train_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+    train_transform = transforms.Compose([# Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
+                                    randomScaleWidth(),
                                     randomBlur(),
-                                    randomScale(),
+                                    # randomBrightness(),
+                                    # randomHue(),
+                                    # randomSaturation(),
+                                    Normalizer(mean=params.mean, std=params.std),
                                     Resizer(input_sizes[args.compound_coef])])
 
-    val_transform = transforms.Compose([Normalizer(mean=params.mean, std=params.std),
+    val_transform = transforms.Compose([# Normalizer(mean=params.mean, std=params.std),
                                     Augmenter(),
+                                    Normalizer(mean=params.mean, std=params.std),
                                     Resizer(input_sizes[args.compound_coef])])
 
     train_set = EyeDataset(train_img_list, train_anno_txt_path, train_transform)
